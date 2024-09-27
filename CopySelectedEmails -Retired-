@@ -1,0 +1,131 @@
+Option Explicit
+
+Sub CopySelectedEmails()
+    On Error GoTo ErrorHandler
+    
+    Dim objOutlook As Outlook.Application
+    Dim objSelection As Outlook.Selection
+    Dim objItem As Object
+    Dim strContent As String
+    Dim i As Long
+    
+    Set objOutlook = Application
+    Set objSelection = objOutlook.ActiveExplorer.Selection
+    
+    Debug.Print "Number of items selected: " & objSelection.Count
+    
+    For i = 1 To objSelection.Count
+        Set objItem = objSelection.Item(i)
+        If TypeName(objItem) = "MailItem" Then
+            ' Add separator before each email (except the first one)
+            If i > 1 Then
+                strContent = strContent & String(50, "+") & vbCrLf & vbCrLf
+            End If
+            
+            ' Add subject
+            strContent = strContent & "Subject: " & objItem.Subject & vbCrLf
+            
+            ' Add sender name and email (cleaned up)
+            strContent = strContent & "From: " & CleanSenderInfo(objItem.senderName, objItem.SenderEmailAddress) & vbCrLf
+            
+            ' Add recipients (To)
+            If objItem.To <> "" Then
+                strContent = strContent & "To: " & objItem.To & vbCrLf
+            Else
+                strContent = strContent & "To: None" & vbCrLf
+            End If
+            
+            ' Add CC recipients (if any)
+            If objItem.CC <> "" Then
+                strContent = strContent & "CC: " & objItem.CC & vbCrLf
+            End If
+            
+            ' Add time sent
+            strContent = strContent & "Sent: " & Format(objItem.SentOn, "yyyy-mm-dd hh:nn:ss") & vbCrLf & vbCrLf
+            
+            ' Add body, strip out links, and remove multiple line breaks
+            Dim bodyText As String
+            bodyText = objItem.Body
+            bodyText = StripLinks(bodyText)
+            bodyText = RemoveMultipleLineBreaks(bodyText)
+            strContent = strContent & bodyText & vbCrLf & vbCrLf
+        End If
+    Next i
+    
+    If strContent <> "" Then
+        ' Remove any remaining multiple line breaks from the entire content
+        strContent = RemoveMultipleLineBreaks(strContent)
+        
+        ' Copy to clipboard
+        With CreateObject("New:{1C3B4210-F441-11CE-B9EA-00AA006B1A69}")
+            .SetText strContent
+            .PutInClipboard
+        End With
+        MsgBox "Email information copied to clipboard!", vbInformation
+    Else
+        MsgBox "No emails selected or no content to copy.", vbExclamation
+    End If
+    
+ExitSub:
+    Set objItem = Nothing
+    Set objSelection = Nothing
+    Set objOutlook = Nothing
+    Exit Sub
+    
+ErrorHandler:
+    MsgBox "An error occurred: " & Err.Description & " (Error " & Err.Number & ")", vbCritical
+    Resume ExitSub
+End Sub
+
+Function CleanSenderInfo(senderName As String, senderEmail As String) As String
+    Dim cleanName As String
+    Dim cleanEmail As String
+    
+    ' Clean up the sender name
+    cleanName = Split(senderName, " CFRE")(0)  ' Remove "CFRE" and anything after it
+    cleanName = Trim(cleanName)  ' Remove any leading or trailing spaces
+    
+    ' Clean up the email address
+    If InStr(senderEmail, "@") > 0 Then
+        cleanEmail = senderEmail  ' Use the email as is if it looks like a valid email
+    Else
+        cleanEmail = ""  ' Set to empty string if it doesn't look like a valid email
+    End If
+    
+    ' Combine the cleaned name and email
+    If cleanEmail <> "" Then
+        CleanSenderInfo = cleanName & " <" & cleanEmail & ">"
+    Else
+        CleanSenderInfo = cleanName
+    End If
+End Function
+
+Function StripLinks(text As String) As String
+    Dim regex As Object
+    Set regex = CreateObject("VBScript.RegExp")
+    
+    regex.Global = True
+    regex.Pattern = "<https?://[^>]+>"
+    
+    StripLinks = regex.Replace(text, "")
+End Function
+
+Function RemoveMultipleLineBreaks(text As String) As String
+    Dim regex As Object
+    Set regex = CreateObject("VBScript.RegExp")
+    
+    ' Replace any whitespace (including spaces, tabs, and line breaks) between paragraphs with a single line break
+    regex.Global = True
+    regex.MultiLine = True
+    regex.Pattern = "(\S)\s*\n\s*\n\s*(\S)"
+    text = regex.Replace(text, "$1" & vbCrLf & vbCrLf & "$2")
+    
+    ' Remove any remaining consecutive line breaks (more than two)
+    regex.Pattern = "(\r\n|\n){3,}"
+    text = regex.Replace(text, vbCrLf & vbCrLf)
+    
+    ' Trim leading and trailing whitespace
+    text = Trim(text)
+    
+    RemoveMultipleLineBreaks = text
+End Function
