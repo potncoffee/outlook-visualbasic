@@ -1,0 +1,119 @@
+Option Explicit
+
+Sub SaveEmailsAsTxtGPTHeader()
+    On Error GoTo ErrorHandler
+    
+    Dim objOutlook As Outlook.Application
+    Dim objSelection As Outlook.Selection
+    Dim objItem As Object
+    Dim strContent As String
+    Dim i As Long
+    Dim filePath As String
+    Dim fileName As String
+    Dim fileNumber As Integer
+    Dim headerText As String
+    
+    Set objOutlook = Application
+    Set objSelection = objOutlook.ActiveExplorer.Selection
+    
+    Debug.Print "Number of items selected: " & objSelection.Count
+    
+    ' Add the header text
+    headerText = "Email Summary " & Format(Now, "yyyy-mm-dd hh:nn:ss") & " Pacific Standard Time" & vbCrLf & vbCrLf
+    headerText = headerText & "Please review the attached emails. Individual emails are separated by a line with ""++++++++++++++++++++++++++++++++++++++++++++++++++"""
+    headerText = headerText & "I need you to make a list of these emails, with one entry on the list per email. Each entry on the list should start with: a) The sender b) Sender email c) Whether my email appeared in the to: field or the cc: field d) The subject e) Time of sending" & vbCrLf
+    headerText = headerText & "Following this header information, I need you to provide a summary that includes all of the following as applicable: 1) Information being requested by the sender 2) Information being provided by the sender 3) Information regarding funding or grant opportunities 4) Concise information about learning opportunities 5) Actions being requested of me, the email recipient 6) Information requested of me, the email recipient. 7) If the email is from any grants.gove email, provide the title of each funding opportunity in the grant summary. 8) If there is a string of quoted replies, please place ""Quote Reply>>>"" as the heading for the summary of each of the quote reply emails." & vbCrLf
+    headerText = headerText & "If any of the items from the numbered list above are missing, then do not include any reference to them in the summary. Please do not provide any commentary at the beginning or the end of the list. Instead, for the header write ""Email Summary [today's date] [current time, pacific standard]. [Line break] Calendar items are not included in summary."" For the end of the list, write ""[This is the end of the email summary]"" including the brackets." & vbCrLf & vbCrLf
+    
+    strContent = headerText
+    
+    For i = 1 To objSelection.Count
+        Set objItem = objSelection.Item(i)
+        If TypeName(objItem) = "MailItem" Then
+            ' Add separator before each email (except the first one)
+            If i > 1 Then
+                strContent = strContent & String(50, "+") & vbCrLf & vbCrLf
+            End If
+            
+            strContent = strContent & "Subject: " & objItem.Subject & vbCrLf
+            strContent = strContent & "From: " & objItem.senderName & " <" & objItem.SenderEmailAddress & ">" & vbCrLf
+            strContent = strContent & "Sent: " & Format(objItem.SentOn, "yyyy-mm-dd hh:nn:ss") & vbCrLf & vbCrLf
+            
+            Dim bodyText As String
+            bodyText = objItem.Body
+            bodyText = StripLinks(bodyText)
+            bodyText = RemoveMultipleLineBreaks(bodyText)
+            strContent = strContent & bodyText & vbCrLf & vbCrLf
+        End If
+    Next i
+    
+    ' Add the ending text
+    strContent = strContent & String(50, "+") & vbCrLf & vbCrLf
+    strContent = strContent & "[This is the end of the email summary]"
+    
+    If strContent <> "" Then
+        strContent = RemoveMultipleLineBreaks(strContent)
+        
+        ' Generate file name and path
+        fileName = "Emails " & Format(Now, "mm.dd.yy") & " "
+        filePath = "\\Client\C$\Users\forreste\Downloads\"
+        
+        ' Find the next available file number
+        Dim fileNum As Integer
+        fileNum = 1
+        Do While Dir(filePath & fileName & fileNum & ".txt") <> ""
+            fileNum = fileNum + 1
+        Loop
+        
+        ' Construct the full file path
+        Dim fullPath As String
+        fullPath = filePath & fileName & fileNum & ".txt"
+        
+        ' Save the content to the file
+        fileNumber = FreeFile
+        Open fullPath For Output As #fileNumber
+        Print #fileNumber, strContent
+        Close #fileNumber
+        
+        MsgBox "Email information saved to file: " & fullPath, vbInformation
+    Else
+        MsgBox "No emails selected or no content to save.", vbExclamation
+    End If
+    
+ExitSub:
+    Set objItem = Nothing
+    Set objSelection = Nothing
+    Set objOutlook = Nothing
+    Exit Sub
+    
+ErrorHandler:
+    MsgBox "An error occurred: " & Err.Description & " (Error " & Err.Number & ")", vbCritical
+    Resume ExitSub
+End Sub
+
+Function StripLinks(text As String) As String
+    Dim regex As Object
+    Set regex = CreateObject("VBScript.RegExp")
+    
+    regex.Global = True
+    regex.Pattern = "<https?://[^>]+>"
+    
+    StripLinks = regex.Replace(text, "")
+End Function
+
+Function RemoveMultipleLineBreaks(text As String) As String
+    Dim regex As Object
+    Set regex = CreateObject("VBScript.RegExp")
+    
+    regex.Global = True
+    regex.MultiLine = True
+    regex.Pattern = "(\S)\s*\n\s*\n\s*(\S)"
+    text = regex.Replace(text, "$1" & vbCrLf & vbCrLf & "$2")
+    
+    regex.Pattern = "(\r\n|\n){3,}"
+    text = regex.Replace(text, vbCrLf & vbCrLf)
+    
+    text = Trim(text)
+    
+    RemoveMultipleLineBreaks = text
+End Function
