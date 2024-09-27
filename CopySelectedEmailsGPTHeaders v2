@@ -1,0 +1,223 @@
+Option Explicit
+
+Sub CopySelectedEmailsGPTHeaders v2()
+    On Error GoTo ErrorHandler
+    
+    Dim objOutlook As Outlook.Application
+    Dim objSelection As Outlook.Selection
+    Dim objItem As Object
+    Dim strContent As String
+    Dim i As Long
+    Dim headerText As String
+    
+    Set objOutlook = Application
+    Set objSelection = objOutlook.ActiveExplorer.Selection
+    
+    Debug.Print "Number of items selected: " & objSelection.Count
+    
+    ' Add the header text with proper formatting
+    headerText = "Please review the attached emails. Individual emails are separated by a line with ""++++++++++++++++++++++++++++++++++++++++++++++++++"" I need you to make a list of these emails, with one entry on the list per email. Each entry on the list should start with: a) The sender b) Sender email c) Whether my email appeared in the to: field or the cc: field d) The subject e) Time of sending" & vbCrLf & vbCrLf
+    
+    headerText = headerText & "Following this header information, I need you to provide a summary that includes all of the following as applicable: 1) Information being requested by the sender 2) Information being provided by the sender 3) Information regarding funding or grant opportunities 4) Concise information about learning opportunities 5) Actions being requested of me, the email recipient 6) Information requested of me, the email recipient. 7) If the email is from any grants.gove email, provide the title of each funding opportunity in the grant summary. 8) If there is a string of quoted replies, please place ""Quote Reply>>>"" as the heading for the summary of each of the quote reply emails." & vbCrLf & vbCrLf
+    
+    headerText = headerText & "If any of the items from the numbered list above are missing, do not include any reference to them in the summary. Please do not provide any commentary at the beginning or the end of the list. Instead, for the header write ""Email Summary [today's date] [current time, pacific standard]. [Line break] Calendar items are not inlcuded in summary."" For the end of the list, write ""[This is the end of the email summary]"" including the brackets." & vbCrLf & vbCrLf
+    
+    ' Add the dynamic header with current date and time
+    strContent = "Email Summary " & Format(Now(), "yyyy-mm-dd") & " " & Format(Now(), "hh:nn:ss") & " Pacific Standard Time" & vbCrLf & vbCrLf
+    
+    ' Add the static header text
+    strContent = strContent & headerText
+    
+    For i = 1 To objSelection.Count
+        Set objItem = objSelection.Item(i)
+        If TypeName(objItem) = "MailItem" Then
+            ' Add separator before each email (except the first one)
+            If i > 1 Then
+                strContent = strContent & String(50, "+") & vbCrLf & vbCrLf
+            End If
+            
+            ' Add subject
+            strContent = strContent & "Subject: " & objItem.Subject & vbCrLf
+            
+            ' Add sender name and email
+            strContent = strContent & "From: " & objItem.senderName & " <" & objItem.SenderEmailAddress & ">" & vbCrLf
+            
+            ' Add time sent
+            strContent = strContent & "Sent: " & Format(objItem.SentOn, "yyyy-mm-dd hh:nn:ss") & vbCrLf & vbCrLf
+            
+            ' Add body, strip out links, remove multiple line breaks, and filter out nonsense text
+            Dim bodyText As String
+            bodyText = GetCleanBody(objItem)
+            strContent = strContent & bodyText & vbCrLf & vbCrLf
+        End If
+    Next i
+    
+    ' Add final separator and ending text
+    strContent = strContent & String(50, "+") & vbCrLf & vbCrLf
+    strContent = strContent & "[This is the end of the email summary]"
+    
+    If strContent <> "" Then
+        ' Remove any remaining multiple line breaks from the entire content
+        strContent = RemoveMultipleLineBreaks(strContent)
+        
+        ' Copy to clipboard
+        With CreateObject("New:{1C3B4210-F441-11CE-B9EA-00AA006B1A69}")
+            .SetText strContent
+            .PutInClipboard
+        End With
+        MsgBox "Email information copied to clipboard!", vbInformation
+    Else
+        MsgBox "No emails selected or no content to copy.", vbExclamation
+    End If
+    
+ExitSub:
+    Set objItem = Nothing
+    Set objSelection = Nothing
+    Set objOutlook = Nothing
+    Exit Sub
+    
+ErrorHandler:
+    MsgBox "An error occurred: " & Err.Description & " (Error " & Err.Number & ")", vbCritical
+    Resume ExitSub
+End Sub
+
+Function GetCleanBody(mailItem As Outlook.mailItem) As String
+    Dim bodyText As String
+    
+    ' Try to get the plain text body first
+    bodyText = mailItem.Body
+    
+    ' If the body is empty or contains mostly nonsense, try to extract from HTML
+    If Len(Trim(bodyText)) = 0 Or IsNonsenseText(bodyText) Then
+        bodyText = ExtractTextFromHTML(mailItem.htmlBody)
+    End If
+    
+    ' Apply existing filters
+    bodyText = StripLinks(bodyText)
+    bodyText = RemoveMultipleLineBreaks(bodyText)
+    
+    ' Additional filtering for nonsense text
+    bodyText = FilterNonsenseText(bodyText)
+    
+    GetCleanBody = bodyText
+End Function
+
+Function ExtractTextFromHTML(htmlBody As String) As String
+    Dim regex As Object
+    Set regex = CreateObject("VBScript.RegExp")
+    
+    ' Remove script and style elements
+    regex.Global = True
+    regex.IgnoreCase = True
+    regex.Pattern = "<(script|style)[\s\S]*?<\/\1>"
+    htmlBody = regex.Replace(htmlBody, "")
+    
+    ' Remove HTML tags
+    regex.Pattern = "<[^>]+>"
+    htmlBody = regex.Replace(htmlBody, " ")
+    
+    ' Decode HTML entities
+    htmlBody = DecodeHtmlEntities(htmlBody)
+    
+    ' Remove extra whitespace
+    regex.Pattern = "\s+"
+    htmlBody = regex.Replace(htmlBody, " ")
+    
+    ExtractTextFromHTML = Trim(htmlBody)
+End Function
+
+Function DecodeHtmlEntities(text As String) As String
+    Dim entities As Object
+    Set entities = CreateObject("Scripting.Dictionary")
+    
+    ' Add common HTML entities
+    entities.Add "&nbsp;", " "
+    entities.Add "&amp;", "&"
+    entities.Add "&lt;", "<"
+    entities.Add "&gt;", ">"
+    entities.Add "&quot;", """"
+    entities.Add "&apos;", "'"
+    
+    Dim entity As Variant
+    For Each entity In entities.Keys
+        text = Replace(text, entity, entities(entity))
+    Next
+    
+    DecodeHtmlEntities = text
+End Function
+
+Function IsNonsenseText(text As String) As Boolean
+    Dim nonsenseRatio As Double
+    Dim totalChars As Long
+    Dim nonsenseChars As Long
+    Dim i As Long
+    
+    totalChars = Len(text)
+    If totalChars = 0 Then
+        IsNonsenseText = True
+        Exit Function
+    End If
+    
+    For i = 1 To totalChars
+        If Not IsAlphaNumeric(Mid(text, i, 1)) Then
+            nonsenseChars = nonsenseChars + 1
+        End If
+    Next i
+    
+    nonsenseRatio = nonsenseChars / totalChars
+    IsNonsenseText = (nonsenseRatio > 0.5) ' Adjust this threshold as needed
+End Function
+
+Function IsAlphaNumeric(char As String) As Boolean
+    IsAlphaNumeric = (Asc(char) >= 48 And Asc(char) <= 57) Or _
+                     (Asc(char) >= 65 And Asc(char) <= 90) Or _
+                     (Asc(char) >= 97 And Asc(char) <= 122) Or _
+                     (Asc(char) = 32) ' Include space as valid
+End Function
+
+Function FilterNonsenseText(text As String) As String
+    Dim lines() As String
+    Dim filteredLines As String
+    Dim i As Long
+    
+    lines = Split(text, vbCrLf)
+    
+    For i = LBound(lines) To UBound(lines)
+        If Not IsNonsenseText(lines(i)) Then
+            filteredLines = filteredLines & lines(i) & vbCrLf
+        End If
+    Next i
+    
+    FilterNonsenseText = Trim(filteredLines)
+End Function
+
+Function StripLinks(text As String) As String
+    Dim regex As Object
+    Set regex = CreateObject("VBScript.RegExp")
+    
+    regex.Global = True
+    regex.Pattern = "<https?://[^>]+>"
+    
+    StripLinks = regex.Replace(text, "")
+End Function
+
+Function RemoveMultipleLineBreaks(text As String) As String
+    Dim regex As Object
+    Set regex = CreateObject("VBScript.RegExp")
+    
+    ' Replace any whitespace (including spaces, tabs, and line breaks) between paragraphs with a single line break
+    regex.Global = True
+    regex.MultiLine = True
+    regex.Pattern = "(\S)\s*\n\s*\n\s*(\S)"
+    text = regex.Replace(text, "$1" & vbCrLf & vbCrLf & "$2")
+    
+    ' Remove any remaining consecutive line breaks (more than two)
+    regex.Pattern = "(\r\n|\n){3,}"
+    text = regex.Replace(text, vbCrLf & vbCrLf)
+    
+    ' Trim leading and trailing whitespace
+    text = Trim(text)
+    
+    RemoveMultipleLineBreaks = text
+End Function
+
